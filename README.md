@@ -25,6 +25,14 @@ On Linux, point it at the prefix:
 python3 download_packs.py --wine-prefix /path/to/prefix [--wine-user NAME]
 ```
 
+## Desktop interface
+
+```bash
+python3 reasonable_companion_gui.py   # needs Tk
+```
+
+![Desktop interface](docs/screenshots/main.png)
+
 ## Options
 
 | Option | Description |
