@@ -26,7 +26,7 @@ import zipfile
 from pathlib import PurePosixPath
 
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 API_BASE = "https://nautilus.reasonstudios.com"
 USER_AGENT = "ReasonCompanion/3.3.1"
@@ -600,27 +600,64 @@ def clean_archive_artifacts(directory):
                 shutil.rmtree(os.path.join(root, dirname), ignore_errors=True)
 
 
-def _validate_archive_members(archive):
-    for info in archive.infolist():
-        path = PurePosixPath(info.filename)
-        if path.is_absolute() or ".." in path.parts:
-            raise ValueError("archive contains an unsafe path: {!r}".format(info.filename))
-        if any(
-            not part or any(char in WINDOWS_INVALID_FILENAME_CHARS for char in part)
-            for part in path.parts
-        ):
-            raise ValueError("archive contains a cross-platform-invalid path: {!r}".format(info.filename))
-        mode = info.external_attr >> 16
-        if stat.S_IFMT(mode) == stat.S_IFLNK:
-            raise ValueError("archive contains a symbolic link: {!r}".format(info.filename))
+def _safe_member_path(name):
+    """Map a zip member name to safe relative path parts.
+
+    Path traversal is rejected. Characters that Windows cannot store in a file
+    name are replaced with "-": packs made on macOS often contain ":" (how a
+    "/" typed in Finder is stored), which Windows would otherwise turn into an
+    alternate data stream.
+    """
+    path = PurePosixPath(name)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("archive contains an unsafe path: {!r}".format(name))
+    parts = []
+    for part in path.parts:
+        part = "".join(
+            "-" if char in WINDOWS_INVALID_FILENAME_CHARS or ord(char) < 32 else char
+            for char in part
+        )
+        if part in ("", ".", ".."):
+            raise ValueError("archive contains an unsafe path: {!r}".format(name))
+        parts.append(part)
+    return parts
 
 
-def extract_archive(archive_path, staging_dir):
-    """Extract a zip after rejecting path traversal and symlink entries."""
+def extract_archive(archive_path, target_dir):
+    """Extract a zip into ``target_dir`` exactly as laid out in the archive.
+
+    Symbolic links and paths that would escape ``target_dir`` are rejected,
+    and names that are invalid on Windows are made safe. Two members that
+    would end up at the same path are an error rather than an overwrite.
+    """
+    root = os.path.realpath(target_dir)
     with zipfile.ZipFile(archive_path, "r") as archive:
-        _validate_archive_members(archive)
-        archive.extractall(staging_dir)
-    clean_archive_artifacts(staging_dir)
+        plan = []
+        claimed = {}
+        for info in archive.infolist():
+            if stat.S_IFMT(info.external_attr >> 16) == stat.S_IFLNK:
+                raise ValueError("archive contains a symbolic link: {!r}".format(info.filename))
+            parts = _safe_member_path(info.filename)
+            if not parts:
+                continue
+            key = "/".join(parts).casefold()
+            if claimed.setdefault(key, info.filename) != info.filename:
+                raise ValueError("archive members {!r} and {!r} map to the same file".format(
+                    claimed[key], info.filename,
+                ))
+            target = os.path.join(root, *parts)
+            if os.path.commonpath([root, os.path.realpath(target)]) != root:
+                raise ValueError("archive contains an unsafe path: {!r}".format(info.filename))
+            plan.append((info, target))
+
+        for info, target in plan:
+            if info.is_dir():
+                os.makedirs(target, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with archive.open(info) as source, open(target, "wb") as destination:
+                shutil.copyfileobj(source, destination, 1 << 20)
+    clean_archive_artifacts(target_dir)
 
 
 def check_free_space(directory, archive_size):
@@ -694,10 +731,9 @@ def download_and_extract(pack_id, title, download_url, auth, packs_dir, sync_clo
             extract_archive(archive_path, extract_dir)
             os.unlink(archive_path)
 
-            entries = os.listdir(extract_dir)
+            # Keep the archive's own layout, as Companion does: a pack zip with
+            # one top-level folder installs as Packs/<title>/<folder>/.
             extracted = extract_dir
-            if len(entries) == 1 and os.path.isdir(os.path.join(extract_dir, entries[0])):
-                extracted = os.path.join(extract_dir, entries[0])
 
             # Companion may have installed the same pack while this one was
             # downloading; never merge into or replace its folder.

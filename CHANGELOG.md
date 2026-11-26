@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2 - 2026-11-26
+
+- Install packs whose archives contain characters Windows cannot store in a
+  file name (such as `:` in packs made on macOS): those characters are
+  replaced with `-`. Names that would then collide are an error.
+- Keep each archive's own folder layout, as Companion does, instead of
+  removing a single top-level folder.
+
 ## 1.0.1 - 2026-11-26
 
 - Read the full catalog from `pack/`; an empty catalog search now returns no

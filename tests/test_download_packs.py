@@ -299,13 +299,14 @@ class DownloadPacksTests(unittest.TestCase):
             )
         return packs_dir, result, seen_dirs, register
 
-    def test_install_stages_beside_packs_and_flattens_one_top_folder(self):
+    def test_install_stages_beside_packs_and_keeps_the_archive_layout(self):
         with tempfile.TemporaryDirectory() as root:
             packs_dir, result, seen_dirs, register = self._install(
                 root, {"New Pack/Patches/a.cmb": "a", "New Pack/demo.mp3": "b"}
             )
             self.assertEqual(result, "installed")
-            self.assertEqual((packs_dir / "New Pack/Patches/a.cmb").read_text(), "a")
+            # Same layout as Companion: the archive's top folder is kept.
+            self.assertEqual((packs_dir / "New Pack/New Pack/Patches/a.cmb").read_text(), "a")
             self.assertEqual(json.loads((packs_dir / "New Pack/.rsmeta").read_text()), {"id": 7})
             register.assert_called_once()
             # Work files lived next to Packs (same disk, invisible to Reason)
@@ -400,6 +401,45 @@ class DownloadPacksTests(unittest.TestCase):
         self.assertEqual(result, 0)
         stream.flush()
         self.assertIn(b"installed ?", stream.buffer.getvalue())
+
+
+    def test_windows_invalid_characters_in_archive_names_are_replaced(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            archive_path = Path(temporary_dir) / "pack.zip"
+            target = Path(temporary_dir) / "target"
+            target.mkdir()
+            _write_zip(archive_path, {
+                "Patches/Fx 1:4 Pong Bouncer.echo": "echo",
+                "01_PATCHES/Clap:Snare Bank.cmb": "cmb",
+                "Odd\\name?.txt": "odd",
+            })
+            download_packs.extract_archive(str(archive_path), str(target))
+            self.assertEqual((target / "Patches/Fx 1-4 Pong Bouncer.echo").read_text(), "echo")
+            self.assertEqual((target / "01_PATCHES/Clap-Snare Bank.cmb").read_text(), "cmb")
+            self.assertEqual((target / "Odd-name-.txt").read_text(), "odd")
+
+    def test_names_that_collide_after_replacement_are_an_error(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            archive_path = Path(temporary_dir) / "pack.zip"
+            target = Path(temporary_dir) / "target"
+            target.mkdir()
+            _write_zip(archive_path, {"a:b.cmb": "first", "a-b.cmb": "second"})
+            with self.assertRaisesRegex(ValueError, "same file"):
+                download_packs.extract_archive(str(archive_path), str(target))
+            self.assertEqual(os.listdir(str(target)), [])
+
+    def test_symbolic_links_in_archives_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            archive_path = Path(temporary_dir) / "pack.zip"
+            target = Path(temporary_dir) / "target"
+            target.mkdir()
+            info = zipfile.ZipInfo("link")
+            info.external_attr = (0o120777 << 16)
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr(info, "/etc/passwd")
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                download_packs.extract_archive(str(archive_path), str(target))
+            self.assertEqual(os.listdir(str(target)), [])
 
 
 if __name__ == "__main__":
