@@ -17,17 +17,25 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            python: '3.9'
-          - os: ubuntu-latest
             python: '3.13'
           - os: macos-latest
             python: '3.11'
           - os: windows-latest
             python: '3.11'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+  # The oldest supported Python is no longer offered on current runners.
+  test-oldest:
+    name: ubuntu-latest / Python 3.9 (container)
+    runs-on: ubuntu-latest
+    container: python:3.9-slim
+    steps:
+      - uses: actions/checkout@v5
       - name: Run tests
         run: python -m unittest discover -s tests -v
