@@ -411,7 +411,7 @@ class DownloadPacksTests(unittest.TestCase):
             _write_zip(archive_path, {
                 "Patches/Fx 1:4 Pong Bouncer.echo": "echo",
                 "01_PATCHES/Clap:Snare Bank.cmb": "cmb",
-                "Odd\\name?.txt": "odd",
+                "Odd|name?.txt": "odd",
             })
             download_packs.extract_archive(str(archive_path), str(target))
             self.assertEqual((target / "Patches/Fx 1-4 Pong Bouncer.echo").read_text(), "echo")
